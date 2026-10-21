@@ -4,6 +4,7 @@
 
 import { FLOOR_ORDER, Item, KINDS, floorRank, floorTag, itemTitle, kindById } from './model';
 import { listJoin, money, num, pct, plural } from './format';
+import { TAX, taxLabel, taxOf } from './tax';
 
 export interface BarRow {
   label: string;
@@ -416,7 +417,7 @@ export class QuoteEngine {
     if (has(/\b(labor|labour|man hours|install time|installation time|hours|technician)\b/)) return this.labor(question, e, dim);
     if (has(/\b(how many|number of|count|quantity|qty|total number)\b/) && !has(/\bhow much\b/)) return this.count(question, e, q);
     if (has(/\b(most expensive|priciest|biggest|largest|top|costliest|highest)\b/)) return this.top(question, e, has(/\broom|space|area/));
-    if (has(/\b(price|prices|cost|costs|total|how much|budget|spend|spent|investment|value|\$|dollar|money|quote|breakdown|break down|split|allocation|expensive|cheapest|cheap)\b/) || (dim && !has(/\bhow many\b/)))
+    if (has(/\b(price|prices|cost|costs|total|how much|budget|spend|spent|investment|value|tax|taxes|after tax|grand total|\$|dollar|money|quote|breakdown|break down|split|allocation|expensive|cheapest|cheap)\b/) || (dim && !has(/\bhow many\b/)))
       return this.price(question, e, dimAny);
     if (!hasEntity && has(/\b(brand|brands|manufacturer|manufacturers|make|makes)\b/)) return this.price(question, e, 'brand');
     if (!hasEntity && has(/\b(supplier|suppliers|vendor|vendors|distributor)\b/)) return this.price(question, e, 'supplier');
@@ -438,15 +439,10 @@ export class QuoteEngine {
     const rooms = new Set(items.map((i) => i.location));
     return {
       question,
-      title: `${money(total)} project across ${rooms.size} locations`,
-      lead: `${plural(sum(devices, (i) => i.units), 'device')} over ${this.systemCount()} systems, before tax.`,
-      stats: [
-        { label: 'Equipment', value: money(sum(items, (i) => i.equipmentTotal)) },
-        { label: 'Labor', value: money(sum(items, (i) => i.laborPrice)) },
-        { label: 'Labor hours', value: num(sum(items, (i) => i.laborHours)) },
-        { label: 'Line items', value: num(items.length) },
-      ],
-      bars: { title: 'Investment by floor', rows: this.bars(items, 'floor') },
+      title: `${money(total + sum(items, taxOf))} project across ${rooms.size} locations, with tax`,
+      lead: `${plural(sum(devices, (i) => i.units), 'device')} over ${this.systemCount()} systems.`,
+      stats: this.moneyStats(items),
+      bars: { title: 'Investment by floor, before tax', rows: this.bars(items, 'floor') },
       notes: this.priceNotes(items),
       followups: ['Cost by room', 'What are the audio locations?', 'Where are the Wi-Fi access points?', 'What are the most expensive items?'],
     };
@@ -473,7 +469,8 @@ export class QuoteEngine {
         ]
       : ['Cost by floor', 'Cost by phase', 'Which brands are used?', 'What are the most expensive rooms?'];
     const rows = this.bars(items, d);
-    let title = scoped ? `${money(total)} for ${scope.replace(/^(?=[A-Z][a-z])/, '')}` : `The project totals ${money(total)}`;
+    const withTax = total + sum(items, taxOf);
+    let title = scoped ? `${money(withTax)} for ${scope} with tax` : `The project totals ${money(withTax)} with tax`;
     if (!scoped && (d === 'brand' || d === 'supplier')) {
       const named = rows.filter((r) => !r.label.startsWith('Labor'));
       title = `${plural(named.length, d)} supply this project. ${named[0].label} leads at ${named[0].sub}`;
@@ -482,23 +479,42 @@ export class QuoteEngine {
       question,
       title,
       lead: scoped
-        ? `${pct(total / sum(this.items, (i) => i.total))} of the ${money(sum(this.items, (i) => i.total))} project, before tax.`
-        : `Equipment plus labor across ${plural(this.locations.length, 'location')}, before tax.`,
-      stats: [
-        { label: 'Equipment', value: money(sum(items, (i) => i.equipmentTotal)) },
-        { label: 'Labor', value: money(sum(items, (i) => i.laborPrice)) },
-        { label: 'Labor hours', value: num(sum(items, (i) => i.laborHours)) },
-        { label: 'Line items', value: num(items.length) },
-      ],
-      bars: { title: `By ${dimName[d]}`, rows },
+        ? `${money(total)} before tax, ${pct(total / sum(this.items, (i) => i.total))} of the project.`
+        : `${money(total)} in equipment and labor plus ${money(withTax - total)} sales tax at ${taxLabel()}.`,
+      stats: this.moneyStats(items),
+      bars: { title: `By ${dimName[d]}, before tax`, rows },
       notes: this.priceNotes(items),
       followups: followups.filter((f) => normalize(f) !== normalize(question)),
     };
   }
 
+  /** Before-tax split, tax and the after-tax total. */
+  private moneyStats(items: Item[]) {
+    const pre = sum(items, (i) => i.total);
+    const tax = sum(items, taxOf);
+    return [
+      { label: 'Equipment', value: money(sum(items, (i) => i.equipmentTotal)) },
+      { label: 'Labor', value: money(sum(items, (i) => i.laborPrice)) },
+      { label: 'Subtotal', value: money(pre) },
+      { label: `Sales tax ${taxLabel()}`, value: money(tax) },
+      { label: 'Total with tax', value: money(pre + tax) },
+    ];
+  }
+
   private priceNotes(items: Item[]): Answer['notes'] {
     const notes: NonNullable<Answer['notes']> = [];
-    if (items.some((i) => i.total !== 0)) notes.push({ tone: 'info', text: 'Prices exclude sales tax. Every line in the quote is marked taxable, but no tax rate is given.' });
+    const untaxed = items.filter((i) => !i.taxable && i.total !== 0);
+    const tax = sum(items, taxOf);
+    if (tax) {
+      const alt = sum(items, (i) => taxOf(i, !TAX.includeLabor));
+      notes.push({
+        tone: 'info',
+        text: TAX.includeLabor
+          ? `Sales tax is ${taxLabel()} on equipment and labor. If labor isn't taxable, tax would be ${money(alt)} and the total ${money(sum(items, (i) => i.total) + alt)}.`
+          : `Sales tax is ${taxLabel()} on equipment only. Taxing labor too would make it ${money(alt)}.`,
+      });
+    }
+    if (untaxed.length) notes.push({ tone: 'info', text: `${plural(untaxed.length, 'line')} marked non-taxable carry no tax.` });
     for (const i of items) {
       if (i.unitPrice > 0 && i.laborPrice > 0 && Math.abs(i.unitPrice * i.qty - i.laborPrice) < 0.01 && kindById.get(i.kind)!.group === 'service')
         notes.push({ tone: 'warn', text: `"${i.name}" has ${money(i.laborPrice)} as both a product price and a labor price, so it adds ${money(i.total)}. Check it isn't counted twice.` });
@@ -563,7 +579,7 @@ export class QuoteEngine {
       return {
         question,
         title: 'Rooms ranked by investment',
-        lead: 'Equipment and labor per location, before tax.',
+        lead: `Equipment and labor per location, before ${taxLabel()} sales tax.`,
         bars: { title: 'By room', rows: this.bars(items, 'room').slice(0, 12) },
         followups: ['What’s in the equipment room?', 'Cost by floor'],
       };
@@ -681,7 +697,7 @@ export class QuoteEngine {
     const locs = new Set(items.map((i) => i.location));
     const stats = [
       { label: 'Devices', value: num(sum(devices, (i) => i.units)) },
-      { label: 'Investment', value: money(sum(items, (i) => i.total)) },
+      { label: 'With tax', value: money(sum(items, (i) => i.total + taxOf(i))) },
       { label: 'Labor hours', value: num(sum(items, (i) => i.laborHours)) },
     ];
     if (locs.size > 1) stats.push({ label: 'Locations', value: num(locs.size) });

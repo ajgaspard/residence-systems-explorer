@@ -48,6 +48,7 @@ To teach it a new word, add an alias in `KIND_ALIASES`, `SYSTEM_ALIASES`, `FLOOR
 
 ### Pricing rules
 
-- Line total = quantity × unit price + labor price. Totals are before tax, because the quote gives no tax rate.
+- Line total = quantity × unit price + labor price.
+- Sales tax is 7%, applied to equipment and labor on every line marked `Taxable = Yes`. Change the rate, or stop taxing labor, in `src/lib/tax.ts`. Breakdowns by room, floor and system are shown before tax.
 - Speaker lines marked `[PAIR]` count as two speakers per unit.
 - "Devices" means installed equipment. Pre-wire end points, wire, harnesses, brackets and allowances are left out.

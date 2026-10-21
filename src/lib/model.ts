@@ -26,6 +26,8 @@ export interface Item {
   system: string;
   phase: string;
   supplier: string;
+  /** Taxable column; a missing value counts as taxable. */
+  taxable: boolean;
   kind: string;
 }
 
@@ -132,6 +134,7 @@ export function parseRows(rows: RawRow[]): Item[] {
         system: str(r['System']) || 'Other',
         phase: str(r['Phase']) || 'Unphased',
         supplier: str(r['Supplier']) || '—',
+        taxable: !/^(no|n|false|0)$/i.test(str(r['Taxable'])),
         kind,
       };
     });

@@ -3,6 +3,7 @@ import data from './data/quote.json';
 import { parseRows, floorRank, floorTag, itemTitle, kindById, type RawRow } from './lib/model';
 import { QuoteEngine, isDevice, normalize, type Answer, type BarRow, type FloorGroup } from './lib/engine';
 import { esc, money, moneyExact, num } from './lib/format';
+import { taxLabel, taxOf } from './lib/tax';
 
 let engine = new QuoteEngine(parseRows(data.rows as RawRow[]), data.source);
 let pool: string[] = engine.suggestions();
@@ -35,7 +36,7 @@ function shell() {
       </label>
       <input id="file" type="file" accept=".xlsx,.xls,.csv" class="sr-only" />
     </div>
-    <dl id="kpis" class="mx-auto max-w-5xl grid grid-cols-2 sm:grid-cols-5 gap-x-6 gap-y-4 pb-5"></dl>
+    <dl id="kpis" class="mx-auto max-w-5xl grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-x-6 gap-y-4 pb-5"></dl>
   </header>
 
   <main class="gutter">
@@ -59,12 +60,12 @@ function shell() {
       <section aria-labelledby="explore-h" class="grid gap-8 md:grid-cols-[1.25fr_1fr]">
         <div class="min-w-0">
           <h2 id="explore-h" class="font-display text-[19px] font-[650] mb-1">Floors and rooms</h2>
-          <p class="text-[13px] text-muted mb-4">Tap a room to see everything installed there.</p>
+          <p class="text-[13px] text-muted mb-4">Tap a room to see everything installed there. Amounts are before tax.</p>
           <div id="floors" class="flex flex-col gap-5"></div>
         </div>
         <div class="min-w-0">
           <h2 class="font-display text-[19px] font-[650] mb-1">Investment by system</h2>
-          <p class="text-[13px] text-muted mb-4">Equipment and labor, before tax.</p>
+          <p class="text-[13px] text-muted mb-4">Equipment and labor, before sales tax.</p>
           <div id="systems"></div>
         </div>
       </section>
@@ -80,8 +81,10 @@ function shell() {
 function renderKpis() {
   const items = engine.items;
   const total = items.reduce((s, i) => s + i.total, 0);
+  const tax = items.reduce((s, i) => s + taxOf(i), 0);
   const kpis = [
-    ['Project total', money(total), 'before tax'],
+    ['Project total', money(total + tax), `incl. ${taxLabel()} sales tax`],
+    ['Sales tax', money(tax), `${money(total)} before tax`],
     ['Equipment', money(items.reduce((s, i) => s + i.equipmentTotal, 0)), ''],
     ['Labor', money(items.reduce((s, i) => s + i.laborPrice, 0)), `${num(items.reduce((s, i) => s + i.laborHours, 0))} hours`],
     ['Devices', num(items.filter(isDevice).reduce((s, i) => s + i.units, 0)), `${new Set(items.map((i) => i.system)).size} systems`],
@@ -90,9 +93,9 @@ function renderKpis() {
   document.querySelector('#kpis')!.innerHTML = kpis
     .map(
       ([label, value, sub], i) => `
-      <div class="min-w-0 ${i === 0 ? 'col-span-2 sm:col-span-1' : ''}">
+      <div class="min-w-0 ">
         <dt class="eyebrow">${label}</dt>
-        <dd class="num font-display ${i === 0 ? 'text-[30px]' : 'text-[22px]'} font-[650] leading-tight">${value}</dd>
+        <dd class="num font-display ${i === 0 ? 'text-[26px]' : 'text-[22px]'} font-[650] leading-tight">${value}</dd>
         ${sub ? `<dd class="text-[12px] text-muted">${sub}</dd>` : ''}
       </div>`,
     )
@@ -254,7 +257,7 @@ function renderAnswer(a: Answer) {
     </header>
     ${
       a.stats?.length
-        ? `<dl class="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3 border-y border-line py-4">${a.stats
+        ? `<dl class="grid grid-cols-2 ${a.stats.length === 5 ? 'sm:grid-cols-5' : a.stats.length === 3 ? 'sm:grid-cols-3' : 'sm:grid-cols-4'} gap-x-6 gap-y-3 border-y border-line py-4">${a.stats
             .map((s) => `<div class="min-w-0"><dt class="eyebrow">${esc(s.label)}</dt><dd class="num text-[18px] font-semibold">${esc(s.value)}</dd></div>`)
             .join('')}</dl>`
         : ''
